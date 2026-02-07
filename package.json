@@ -1,14 +1,121 @@
 {
-  "name": "mct-subscription",
+  "name": "mct-subscription-module",
   "version": "1.0.0",
-  "description": "MCT module for SUBSCRIPTION",
-  "main": "dist/index.js",
+  "description": "MCT Subscription Module",
+  "main": "src/index.ts",
   "scripts": {
+    "start": "ts-node src/index.ts",
     "build": "tsc",
-    "dev": "tsx watch src/index.ts",
-    "test": "jest",
-    "setup": "npm install && npx drizzle-kit push:pg"
+    "docker:build": "docker build -t mct-subscription-module .",
+    "docker:run": "docker run -p 3000:3000 mct-subscription-module"
   },
-  "keywords": ["mct", "api", "microservice"],
-  "license": "MIT"
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "express": "^4.17.1",
+    "typescript": "^4.0.5",
+    "ts-node": "^9.0.0",
+    "pg": "^8.5.1",
+    "typeorm": "^0.2.34"
+  },
+  "devDependencies": {
+    "@types/node": "^14.14.10",
+    "@types/express": "^4.17.9"
+  }
+}
+### src/index.ts
+import express from 'express';
+import { setupRoutes } from './api/routes';
+import { setupMcpServer } from './mct/server';
+const app = express();
+const port = process.env.PORT || 3000;
+setupRoutes(app);
+setupMcpServer();
+app.listen(port, () => {
+  console.log(`Server running on http://localhost:${port}`);
+});
+### src/api/routes.ts
+import { Express } from 'express';
+import { getSubscriptions, createSubscription } from '../services/subscriptionService';
+export function setupRoutes(app: Express) {
+  app.get('/subscriptions', async (req, res) => {
+    const subscriptions = await getSubscriptions();
+    res.json(subscriptions);
+  });
+  app.post('/subscriptions', async (req, res) => {
+    const subscription = await createSubscription(req.body);
+    res.status(201).json(subscription);
+  });
+}
+### src/db/schema.ts
+import { Entity, PrimaryGeneratedColumn, Column, createConnection } from 'typeorm';
+@Entity()
+export class Subscription {
+  @PrimaryGeneratedColumn()
+  id: number;
+  @Column()
+  userId: number;
+  @Column()
+  serviceId: string;
+  @Column()
+  startDate: Date;
+  @Column()
+  endDate: Date;
+}
+export async function connectDatabase() {
+  const connection = await createConnection({
+    type: "postgres",
+    host: "localhost",
+    port: 5432,
+    username: "user",
+    password: "pass",
+    database: "mct_subscriptions",
+    entities: [
+      Subscription
+    ],
+    synchronize: true,
+    logging: false
+  });
+  return connection;
+}
+### src/mct/server.ts
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp';
+import { registerTools } from './tools';
+export function setupMcpServer() {
+  const server = new McpServer({
+    name: "subscription-mcp-server",
+    version: "1.0.0"
+  });
+  registerTools(server);
+}
+### src/mct/tools.ts
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp';
+import { getSubscriptions } from '../services/subscriptionService';
+export function registerTools(server: McpServer) {
+  server.registerTool("getSubscriptions", {
+    title: "Get Subscriptions",
+    description: "Fetches all subscriptions",
+    inputSchema: {},
+    outputSchema: {}
+  }, async () => {
+    const subscriptions = await getSubscriptions();
+    return subscriptions;
+  });
+}
+### src/services/subscriptionService.ts
+import { Repository } from 'typeorm';
+import { Subscription, connectDatabase } from '../db/schema';
+let subscriptionRepository: Repository<Subscription>;
+async function init() {
+  const connection = await connectDatabase();
+  subscriptionRepository = connection.getRepository(Subscription);
+}
+export async function getSubscriptions() {
+  await init();
+  return subscriptionRepository.find();
+}
+export async function createSubscription(data: any) {
+  await init();
+  const subscription = subscriptionRepository.create(data);
+  await subscriptionRepository.save(subscription);
+  return subscription;
 }
